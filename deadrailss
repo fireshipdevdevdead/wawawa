@@ -1,0 +1,44 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "деид реилс нахуй",
+    LoadingTitle = "nil",
+    LoadingSubtitle = "by Максимка",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = nil,
+        FileName = "KrnlConfig"
+    },
+    Theme = "Default"
+})
+
+local Tab = Window:CreateTab("Главное", "home")
+
+local CrosshairSlider = Tab:CreateSlider({
+    Name = "Размер прицела",
+    Range = {0.1, 7},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = 1,
+    Flag = "CrosshairSizeSlider",
+    Callback = function(Value)
+        local crosshair = game:GetService("Players").LocalPlayer.PlayerGui.Crosshair.Crosshair
+        if crosshair then
+            crosshair.Size = UDim2.new(0, Value, 0, Value)
+        end
+    end,
+})
+
+local OutlineColorPicker = Tab:CreateColorPicker({
+    Name = "Цвет обводки предметов",
+    Color = Color3.fromRGB(255, 255, 255),
+    Flag = "OutlineColorPicker",
+    Callback = function(Color)
+        local dragHighlight = game:GetService("ReplicatedStorage").Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler.DragHighlight
+        if dragHighlight then
+            dragHighlight.OutlineColor = Color
+        end
+    end
+})
+
+Rayfield:LoadConfiguration()
