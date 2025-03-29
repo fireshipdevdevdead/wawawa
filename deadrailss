@@ -1,44 +1,166 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local ESP_Enabled = false
+local ESP_Color = Color3.fromRGB(0, 255, 0)
+local ESP_Objects = {}
+
+local function ClearESP()
+    for obj, data in pairs(ESP_Objects) do
+        if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+    end
+    ESP_Objects = {}
+end
+
+local function CreateESP(obj)
+    if not obj:IsA("Model") or ESP_Objects[obj] then return end
+
+    local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+    if not primaryPart then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight"
+    highlight.Adornee = obj
+    highlight.FillColor = ESP_Color
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = ESP_Color
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = obj
+
+    ESP_Objects[obj] = {
+        Highlight = highlight
+    }
+end
+
+local function UpdateColors()
+    for obj, data in pairs(ESP_Objects) do
+        if data.Highlight then
+            data.Highlight.FillColor = ESP_Color
+            data.Highlight.OutlineColor = ESP_Color
+        end
+    end
+end
+
+local function UpdateESP()
+    ClearESP()
+    for _, obj in pairs(CollectionService:GetTagged("DraggableObject")) do
+        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        if part then
+            CreateESP(obj)
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if ESP_Enabled then
+        for obj, data in pairs(ESP_Objects) do
+            if not obj:IsDescendantOf(workspace) then
+                ClearESP()
+                UpdateESP()
+                break
+            end
+        end
+    end
+end)
+
+CollectionService:GetInstanceAddedSignal("DraggableObject"):Connect(function(obj)
+    if ESP_Enabled then CreateESP(obj) end
+end)
+
+CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(obj)
+    if ESP_Objects[obj] then
+        ClearESP()
+        UpdateESP()
+    end
+end)
+
+local defaultFOV = math.clamp(Camera.FieldOfView, 70, 110)
+
 local Window = Rayfield:CreateWindow({
-    Name = "деид реилс нахуй",
-    LoadingTitle = "nil",
+    Name = "дед реилс нахуй",
+    LoadingTitle = "Загрузка...",
     LoadingSubtitle = "by Максимка",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = nil,
-        FileName = "KrnlConfig"
-    },
-    Theme = "Default"
+    Theme = "Default",
 })
 
-local Tab = Window:CreateTab("Главное", "home")
+local MainTab = Window:CreateTab("Главное", "home")
 
-local CrosshairSlider = Tab:CreateSlider({
+MainTab:CreateToggle({
+    Name = "Включить ESP (Highlight)",
+    CurrentValue = false,
+    Flag = "ToggleESP",
+    Callback = function(Value)
+        ESP_Enabled = Value
+        if Value then
+            UpdateESP()
+        else
+            ClearESP()
+        end
+    end
+})
+
+MainTab:CreateColorPicker({
+    Name = "Цвет обводки предметов (с есп не ворк)",
+    Color = Color3.fromRGB(255, 255, 255),
+    Flag = "OutlineColorPicker",
+    Callback = function(Color)
+        local highlight = ReplicatedStorage:FindFirstChild("Client")
+            and ReplicatedStorage.Client:FindFirstChild("Handlers")
+            and ReplicatedStorage.Client.Handlers:FindFirstChild("DraggableItemHandlers")
+            and ReplicatedStorage.Client.Handlers.DraggableItemHandlers:FindFirstChild("ClientDraggableObjectHandler")
+            and ReplicatedStorage.Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler:FindFirstChild("DragHighlight")
+
+        if highlight and highlight:IsA("Highlight") then
+            highlight.OutlineColor = Color
+        end
+    end
+})
+
+MainTab:CreateSlider({
     Name = "Размер прицела",
-    Range = {0.1, 7},
+    Range = {0.1, 0.7},
     Increment = 0.1,
     Suffix = "x",
     CurrentValue = 1,
     Flag = "CrosshairSizeSlider",
     Callback = function(Value)
-        local crosshair = game:GetService("Players").LocalPlayer.PlayerGui.Crosshair.Crosshair
-        if crosshair then
-            crosshair.Size = UDim2.new(0, Value, 0, Value)
-        end
-    end,
-})
+        local crosshair = LocalPlayer:FindFirstChild("PlayerGui")
+            and LocalPlayer.PlayerGui:FindFirstChild("Crosshair")
+            and LocalPlayer.PlayerGui.Crosshair:FindFirstChild("Crosshair")
 
-local OutlineColorPicker = Tab:CreateColorPicker({
-    Name = "Цвет обводки предметов",
-    Color = Color3.fromRGB(255, 255, 255),
-    Flag = "OutlineColorPicker",
-    Callback = function(Color)
-        local dragHighlight = game:GetService("ReplicatedStorage").Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler.DragHighlight
-        if dragHighlight then
-            dragHighlight.OutlineColor = Color
+        if crosshair then
+            crosshair.Size = UDim2.new(0, Value * 20, 0, Value * 20)
         end
     end
 })
 
-Rayfield:LoadConfiguration()
+MainTab:CreateSlider({
+    Name = "Угол обзора (FOV)",
+    Range = {70, 110},
+    Increment = 1,
+    Suffix = "°",
+    CurrentValue = defaultFOV,
+    Flag = "FOVSlider",
+    Callback = function(Value)
+        Camera.FieldOfView = Value
+    end
+})
+
+local SettingsTab = Window:CreateTab("Настройки", "settings")
+
+SettingsTab:CreateColorPicker({
+    Name = "Цвет подсветки ESP",
+    Color = ESP_Color,
+    Flag = "ESPColor",
+    Callback = function(Color)
+        ESP_Color = Color
+        UpdateColors()
+    end
+})
