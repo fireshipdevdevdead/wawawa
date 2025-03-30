@@ -5,6 +5,8 @@ local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
@@ -18,11 +20,38 @@ local NPC_ESP_Objects = {}
 
 local InstantHeal_Enabled = false
 local InstantInteract_Enabled = false
+local NoFog_Enabled = false
+local FullBright_Enabled = false
+
+local originalLightingValues = {
+	FogStart = nil,
+	FogEnd = nil,
+	FogColor = nil,
+	Ambient = nil,
+	OutdoorAmbient = nil,
+	Brightness = nil,
+	ColorShift_Top = nil,
+	ColorShift_Bottom = nil,
+    AtmosphereInstance = nil,
+    AtmosphereDensity = nil,
+    AtmosphereOffset = nil,
+    AtmosphereHaze = nil,
+    AtmosphereColor = nil,
+}
+local lightingPropertiesStored = {
+    Fog = false,
+    Brightness = false,
+    Atmosphere = false,
+}
 
 local function SafeDestroy(instance)
     if instance and instance.Parent then
         pcall(function() instance:Destroy() end)
     end
+end
+
+function IsValid(instance)
+    return instance and instance.Parent ~= nil
 end
 
 local function ClearESP(obj)
@@ -57,11 +86,9 @@ end
 
 local function CreateESP(obj)
     if not IsValid(obj) or not obj:IsA("Model") or ESP_Objects[obj] then return end
-
     local success, result = pcall(function()
         local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
         if not primaryPart then return nil end
-
         local highlight = Instance.new("Highlight")
         highlight.Name = "Rayfield_ESP_Highlight"
         highlight.Adornee = obj
@@ -71,10 +98,8 @@ local function CreateESP(obj)
         highlight.OutlineTransparency = 0
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.Parent = obj
-
         return highlight
     end)
-
     if success and result then
         ESP_Objects[obj] = { Highlight = result }
     elseif not success then
@@ -83,19 +108,10 @@ local function CreateESP(obj)
 end
 
 local function CreateNPCESP(npc)
-    if not IsValid(npc) or not npc:IsA("Model") or NPC_ESP_Objects[npc] or Players:GetPlayerFromCharacter(npc) then
-        return
-    end
-
+    if not IsValid(npc) or not npc:IsA("Model") or NPC_ESP_Objects[npc] or Players:GetPlayerFromCharacter(npc) then return end
     local humanoid = npc:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then
-        return
-    end
-
-    if npc:FindFirstChild("Rayfield_NPC_ESP_Highlight") then
-         return
-    end
-
+    if not humanoid or humanoid.Health <= 0 then return end
+    if npc:FindFirstChild("Rayfield_NPC_ESP_Highlight") then return end
     local success, result = pcall(function()
         local highlight = Instance.new("Highlight")
         highlight.Name = "Rayfield_NPC_ESP_Highlight"
@@ -106,10 +122,8 @@ local function CreateNPCESP(npc)
         highlight.OutlineTransparency = 0
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.Parent = npc
-
         return { Highlight = highlight, Humanoid = humanoid }
     end)
-
     if success and result then
         NPC_ESP_Objects[npc] = result
     elseif not success then
@@ -124,9 +138,7 @@ local function UpdateColors()
                 data.Highlight.FillColor = ESP_Color
                 data.Highlight.OutlineColor = ESP_Color
             end)
-        else
-             ESP_Objects[obj] = nil
-        end
+        else ESP_Objects[obj] = nil end
     end
 end
 
@@ -137,49 +149,31 @@ local function UpdateNPCColors()
                 data.Highlight.FillColor = NPC_ESP_Color
                 data.Highlight.OutlineColor = NPC_ESP_Color
              end)
-        else
-            NPC_ESP_Objects[npc] = nil
-        end
+        else NPC_ESP_Objects[npc] = nil end
     end
 end
 
 local function UpdateESP()
     ClearESP()
     if not ESP_Enabled then return end
-
-    for _, obj in pairs(CollectionService:GetTagged("DraggableObject")) do
-        CreateESP(obj)
-    end
+    for _, obj in pairs(CollectionService:GetTagged("DraggableObject")) do CreateESP(obj) end
 end
 
 local function UpdateNPCESP()
     ClearNPCESP()
     if not NPC_ESP_Enabled then return end
-
     for _, potentialNPC in pairs(Workspace:GetChildren()) do
-         if potentialNPC:IsA("Model") then
-              CreateNPCESP(potentialNPC)
-         end
+         if potentialNPC:IsA("Model") then CreateNPCESP(potentialNPC) end
     end
-    --[[
-     for _, descendant in pairs(Workspace:GetDescendants()) do
-         if descendant:IsA("Model") then
-             CreateNPCESP(descendant)
-         end
-     end
-     --]]
 end
 
 local function instantHeal()
     local character = LocalPlayer.Character
     if not character then return false end
-
     local bandage = character:FindFirstChild("Bandage")
     if not bandage then return false end
-
     local useRemote = bandage:FindFirstChild("Use")
     if not useRemote or not useRemote:IsA("RemoteEvent") then return false end
-
     local success = pcall(function() useRemote:FireServer() end)
     if not success then warn("Failed to fire Bandage 'Use' remote.") end
     return success
@@ -187,71 +181,37 @@ end
 
 local bandageRenderStepConnection = nil
 local function patchBandageSystem()
-    local success, bandageUI = pcall(function()
-        return LocalPlayer.PlayerGui:WaitForChild("BandageUse", 5)
-    end)
-
-    if not success or not bandageUI then
-        warn("Failed to find BandageUse GUI")
-        return
-    end
-
+    local success, bandageUI = pcall(function() return LocalPlayer.PlayerGui:WaitForChild("BandageUse", 5) end)
+    if not success or not bandageUI then warn("Failed to find BandageUse GUI"); return end
     local lineFrame = bandageUI:FindFirstChild("LineFrame", true)
     local fillBar = lineFrame and lineFrame:FindFirstChild("Fill")
-
-    if not fillBar then
-        warn("Failed to find Bandage Fill Bar")
-    end
-
-    if bandageRenderStepConnection then
-        bandageRenderStepConnection:Disconnect()
-        bandageRenderStepConnection = nil
-    end
-
+    if not fillBar then warn("Failed to find Bandage Fill Bar") end
+    if bandageRenderStepConnection then bandageRenderStepConnection:Disconnect(); bandageRenderStepConnection = nil end
     bandageRenderStepConnection = RunService:BindToRenderStep("InstantBandage", Enum.RenderPriority.Camera.Value + 1, function()
         if InstantHeal_Enabled and bandageUI.Enabled then
             local uiVisible = bandageUI.Enabled
-
-            if fillBar then
-                 pcall(function() fillBar.Size = UDim2.new(1, 0, 1, 0) end)
-            end
-
+            if fillBar then pcall(function() fillBar.Size = UDim2.new(1, 0, 1, 0) end) end
             local healed = instantHeal()
-
-            if healed then
-                 pcall(function() bandageUI.Enabled = false end)
-            elseif uiVisible then
-
-            end
+            if healed then pcall(function() bandageUI.Enabled = false end) elseif uiVisible then end
         end
     end)
 end
 
 local function modifyProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
-
     local success = pcall(function()
         local originalDuration = prompt.HoldDuration
-        if not prompt:GetAttribute("OriginalHoldDuration") then
-            prompt:SetAttribute("OriginalHoldDuration", originalDuration)
-        end
-
-        if InstantInteract_Enabled then
-            prompt.HoldDuration = 0.05
-        end
+        if not prompt:GetAttribute("OriginalHoldDuration") then prompt:SetAttribute("OriginalHoldDuration", originalDuration) end
+        if InstantInteract_Enabled then prompt.HoldDuration = 0.05 end
     end)
     if not success then warn("Failed to modify prompt:", prompt:GetFullName()) end
 end
 
 local function restoreProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
-
      local success = pcall(function()
         local originalDuration = prompt:GetAttribute("OriginalHoldDuration")
-        if originalDuration then
-            prompt.HoldDuration = originalDuration
-
-        end
+        if originalDuration then prompt.HoldDuration = originalDuration end
     end)
     if not success then warn("Failed to restore prompt:", prompt:GetFullName()) end
 end
@@ -259,38 +219,105 @@ end
 local function updateAllProximityPrompts()
     for _, descendant in pairs(Workspace:GetDescendants()) do
         if descendant:IsA("ProximityPrompt") then
-            if InstantInteract_Enabled then
-                modifyProximityPrompt(descendant)
-            else
-                restoreProximityPrompt(descendant)
-            end
+            if InstantInteract_Enabled then modifyProximityPrompt(descendant) else restoreProximityPrompt(descendant) end
         end
+    end
+end
+
+local function StoreOriginalLighting(type)
+    if type == "Fog" and not lightingPropertiesStored.Fog then
+        pcall(function() originalLightingValues.FogStart = Lighting.FogStart end)
+        pcall(function() originalLightingValues.FogEnd = Lighting.FogEnd end)
+        pcall(function() originalLightingValues.FogColor = Lighting.FogColor end)
+        lightingPropertiesStored.Fog = true
+    elseif type == "Brightness" and not lightingPropertiesStored.Brightness then
+        pcall(function() originalLightingValues.Ambient = Lighting.Ambient end)
+        pcall(function() originalLightingValues.OutdoorAmbient = Lighting.OutdoorAmbient end)
+        pcall(function() originalLightingValues.Brightness = Lighting.Brightness end)
+        pcall(function() originalLightingValues.ColorShift_Top = Lighting.ColorShift_Top end)
+        pcall(function() originalLightingValues.ColorShift_Bottom = Lighting.ColorShift_Bottom end)
+        lightingPropertiesStored.Brightness = true
+    elseif type == "Atmosphere" and not lightingPropertiesStored.Atmosphere then
+        local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+        if atmosphere then
+            originalLightingValues.AtmosphereInstance = atmosphere
+            pcall(function() originalLightingValues.AtmosphereDensity = atmosphere.Density end)
+            pcall(function() originalLightingValues.AtmosphereOffset = atmosphere.Offset end)
+            pcall(function() originalLightingValues.AtmosphereHaze = atmosphere.Haze end)
+            pcall(function() originalLightingValues.AtmosphereColor = atmosphere.Color end)
+            lightingPropertiesStored.Atmosphere = true
+        end
+    end
+end
+
+local function ApplyNoFog()
+    pcall(function() Lighting.FogStart = 1000000 end)
+    pcall(function() Lighting.FogEnd = 2000000 end)
+    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+    if atmosphere then
+        pcall(function() atmosphere.Density = 0 end)
+        pcall(function() atmosphere.Offset = 0 end)
+        pcall(function() atmosphere.Haze = 0 end)
+    end
+end
+
+local function RestoreNoFog()
+    if lightingPropertiesStored.Fog then
+        pcall(function() Lighting.FogStart = originalLightingValues.FogStart end)
+        pcall(function() Lighting.FogEnd = originalLightingValues.FogEnd end)
+        pcall(function() Lighting.FogColor = originalLightingValues.FogColor end)
+    end
+    if lightingPropertiesStored.Atmosphere and IsValid(originalLightingValues.AtmosphereInstance) then
+        local atmosphere = originalLightingValues.AtmosphereInstance
+        pcall(function() atmosphere.Density = originalLightingValues.AtmosphereDensity end)
+        pcall(function() atmosphere.Offset = originalLightingValues.AtmosphereOffset end)
+        pcall(function() atmosphere.Haze = originalLightingValues.AtmosphereHaze end)
+        pcall(function() atmosphere.Color = originalLightingValues.AtmosphereColor end)
+    end
+end
+
+local function ApplyFullBright()
+    pcall(function() Lighting.Ambient = Color3.fromRGB(180, 180, 180) end)
+    pcall(function() Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180) end)
+    pcall(function() Lighting.Brightness = 2 end)
+    pcall(function() Lighting.ColorShift_Top = Color3.fromRGB(0, 0, 0) end)
+    pcall(function() Lighting.ColorShift_Bottom = Color3.fromRGB(0, 0, 0) end)
+    local sky = Lighting:FindFirstChildOfClass("Sky") or Camera:FindFirstChildOfClass("Sky")
+    if sky then pcall(function() sky.Brightness = 2 end) end
+end
+
+local function RestoreFullBright()
+    if lightingPropertiesStored.Brightness then
+        pcall(function() Lighting.Ambient = originalLightingValues.Ambient end)
+        pcall(function() Lighting.OutdoorAmbient = originalLightingValues.OutdoorAmbient end)
+        pcall(function() Lighting.Brightness = originalLightingValues.Brightness end)
+        pcall(function() Lighting.ColorShift_Top = originalLightingValues.ColorShift_Top end)
+        pcall(function() Lighting.ColorShift_Bottom = originalLightingValues.ColorShift_Bottom end)
     end
 end
 
 RunService.RenderStepped:Connect(function()
     if ESP_Enabled then
         for obj, data in pairs(ESP_Objects) do
-            if not IsValid(obj) or not obj:IsDescendantOf(Workspace) or not IsValid(data.Highlight) then
-                ClearESP(obj)
-            end
+            if not IsValid(obj) or not obj:IsDescendantOf(Workspace) or not IsValid(data.Highlight) then ClearESP(obj) end
+        end
+    end
+    if NPC_ESP_Enabled then
+        for npc, data in pairs(NPC_ESP_Objects) do
+            if not IsValid(npc) or not npc:IsDescendantOf(Workspace) or not IsValid(data.Highlight) or not IsValid(data.Humanoid) or data.Humanoid.Health <= 0 then ClearNPCESP(npc) end
         end
     end
 
-    if NPC_ESP_Enabled then
-        for npc, data in pairs(NPC_ESP_Objects) do
-            if not IsValid(npc) or not npc:IsDescendantOf(Workspace) or not IsValid(data.Highlight) or not IsValid(data.Humanoid) or data.Humanoid.Health <= 0 then
-                ClearNPCESP(npc)
-            end
-        end
+    if NoFog_Enabled then
+        ApplyNoFog()
+    end
+    if FullBright_Enabled then
+        ApplyFullBright()
     end
 end)
 
 CollectionService:GetInstanceAddedSignal("DraggableObject"):Connect(function(obj)
-    if ESP_Enabled then
-        task.wait()
-        CreateESP(obj)
-    end
+    if ESP_Enabled then task.wait(); CreateESP(obj) end
 end)
 
 CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(obj)
@@ -298,18 +325,13 @@ CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(o
 end)
 
 Workspace.DescendantAdded:Connect(function(descendant)
-    if NPC_ESP_Enabled and descendant:IsA("Model") then
-        task.defer(CreateNPCESP, descendant)
-    end
-
-    if InstantInteract_Enabled and descendant:IsA("ProximityPrompt") then
-        modifyProximityPrompt(descendant)
+    if NPC_ESP_Enabled and descendant:IsA("Model") then task.defer(CreateNPCESP, descendant) end
+    if InstantInteract_Enabled and descendant:IsA("ProximityPrompt") then modifyProximityPrompt(descendant) end
+    if descendant:IsA("Atmosphere") and not lightingPropertiesStored.Atmosphere then
+        StoreOriginalLighting("Atmosphere")
+        if NoFog_Enabled then ApplyNoFog() end
     end
 end)
-
-function IsValid(instance)
-    return instance and instance.Parent ~= nil
-end
 
 local defaultFOV = math.clamp(Camera.FieldOfView, 70, 110)
 
@@ -323,55 +345,45 @@ local Window = Rayfield:CreateWindow({
 local WhatsNewTab = Window:CreateTab("Что нового?", "info")
 WhatsNewTab:CreateParagraph({
     Title = "Список изменений",
-    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность ESP для NPC и предметов"
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность ESP\n30.03.2025 15:02 | Добавлена функция удаление тумана и полная яркость для ночи"
 })
 
 local MainTab = Window:CreateTab("Главное", "home")
 
+MainTab:CreateToggle({ Name = "ESP для предметов", CurrentValue = ESP_Enabled, Flag = "ToggleESP", Callback = function(Value) ESP_Enabled = Value; if Value then UpdateESP() else ClearESP() end end })
+MainTab:CreateToggle({ Name = "ESP для NPC", CurrentValue = NPC_ESP_Enabled, Flag = "ToggleNPCESP", Callback = function(Value) NPC_ESP_Enabled = Value; if Value then UpdateNPCESP() else ClearNPCESP() end end })
+
+MainTab:CreateToggle({ Name = "Мгновенное использование аптечки", CurrentValue = InstantHeal_Enabled, Flag = "InstantHealToggle", Callback = function(Value) InstantHeal_Enabled = Value end })
+MainTab:CreateToggle({ Name = "Быстрое взаимодействие", CurrentValue = InstantInteract_Enabled, Flag = "InstantInteractToggle", Callback = function(Value) InstantInteract_Enabled = Value; updateAllProximityPrompts() end })
+
 MainTab:CreateToggle({
-    Name = "ESP для предметов",
-    CurrentValue = ESP_Enabled,
-    Flag = "ToggleESP",
+    Name = "Убрать туман",
+    CurrentValue = NoFog_Enabled,
+    Flag = "NoFogToggle",
     Callback = function(Value)
-        ESP_Enabled = Value
+        NoFog_Enabled = Value
         if Value then
-            UpdateESP()
+            StoreOriginalLighting("Fog")
+            StoreOriginalLighting("Atmosphere")
+            ApplyNoFog()
         else
-            ClearESP()
+            RestoreNoFog()
         end
     end
 })
 
 MainTab:CreateToggle({
-    Name = "ESP для NPC",
-    CurrentValue = NPC_ESP_Enabled,
-    Flag = "ToggleNPCESP",
+    Name = "Полная яркость",
+    CurrentValue = FullBright_Enabled,
+    Flag = "FullBrightToggle",
     Callback = function(Value)
-        NPC_ESP_Enabled = Value
+        FullBright_Enabled = Value
         if Value then
-            UpdateNPCESP()
+            StoreOriginalLighting("Brightness")
+            ApplyFullBright()
         else
-            ClearNPCESP()
+            RestoreFullBright()
         end
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Мгновенное использование аптечки",
-    CurrentValue = InstantHeal_Enabled,
-    Flag = "InstantHealToggle",
-    Callback = function(Value)
-        InstantHeal_Enabled = Value
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Быстрое взаимодействие",
-    CurrentValue = InstantInteract_Enabled,
-    Flag = "InstantInteractToggle",
-    Callback = function(Value)
-        InstantInteract_Enabled = Value
-        updateAllProximityPrompts()
     end
 })
 
@@ -386,7 +398,6 @@ MainTab:CreateColorPicker({
                 and ReplicatedStorage.Client.Handlers:FindFirstChild("DraggableItemHandlers", 1)
                 and ReplicatedStorage.Client.Handlers.DraggableItemHandlers:FindFirstChild("ClientDraggableObjectHandler", 1)
                 and ReplicatedStorage.Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler:FindFirstChild("DragHighlight")
-
             if highlight and highlight:IsA("Highlight") then
                 highlight.OutlineColor = Color
             else
@@ -399,60 +410,32 @@ MainTab:CreateColorPicker({
 
 MainTab:CreateSlider({
     Name = "Размер прицела",
-    Range = {0.1, 0.7},
-    Increment = 0.1,
-    Suffix = "x",
-    CurrentValue = 0.3,
-    Flag = "CrosshairSizeSlider",
+    Range = {0.1, 0.7}, Increment = 0.1, Suffix = "x", CurrentValue = 0.3, Flag = "CrosshairSizeSlider",
     Callback = function(Value)
         local success = pcall(function()
             local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
             local crosshairUI = playerGui and playerGui:FindFirstChild("Crosshair")
             local crosshair = crosshairUI and crosshairUI:FindFirstChild("Crosshair")
-
             if crosshair and (crosshair:IsA("ImageLabel") or crosshair:IsA("Frame")) then
                 crosshair.Size = UDim2.new(0, Value * 20, 0, Value * 20)
-            else
-
             end
         end)
-
     end
 })
 
 MainTab:CreateSlider({
     Name = "Угол обзора (FOV)",
-    Range = {70, 110},
-    Increment = 1,
-    Suffix = "°",
-    CurrentValue = defaultFOV,
-    Flag = "FOVSlider",
-    Callback = function(Value)
-        Camera.FieldOfView = Value
-    end
+    Range = {70, 110}, Increment = 1, Suffix = "°", CurrentValue = defaultFOV, Flag = "FOVSlider",
+    Callback = function(Value) Camera.FieldOfView = Value end
 })
 
 local SettingsTab = Window:CreateTab("Настройки", "settings")
 
-SettingsTab:CreateColorPicker({
-    Name = "Цвет подсветки ESP предметов",
-    Color = ESP_Color,
-    Flag = "ESPColor",
-    Callback = function(Color)
-        ESP_Color = Color
-        UpdateColors()
-    end
-})
-
-SettingsTab:CreateColorPicker({
-    Name = "Цвет подсветки ESP NPC",
-    Color = NPC_ESP_Color,
-    Flag = "NPCESPColor",
-    Callback = function(Color)
-        NPC_ESP_Color = Color
-        UpdateNPCColors()
-    end
-})
+SettingsTab:CreateColorPicker({ Name = "Цвет подсветки ESP предметов", Color = ESP_Color, Flag = "ESPColor", Callback = function(Color) ESP_Color = Color; UpdateColors() end })
+SettingsTab:CreateColorPicker({ Name = "Цвет подсветки ESP NPC", Color = NPC_ESP_Color, Flag = "NPCESPColor", Callback = function(Color) NPC_ESP_Color = Color; UpdateNPCColors() end })
 
 patchBandageSystem()
 updateAllProximityPrompts()
+StoreOriginalLighting("Fog")
+StoreOriginalLighting("Brightness")
+StoreOriginalLighting("Atmosphere")
