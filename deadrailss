@@ -5,132 +5,144 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
+local CollectionService = game:GetService("CollectionService")
 
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
-local InstantHeal_Enabled = false
-local InstantInteract_Enabled = false
-local NoFog_Enabled = false
-local FullBright_Enabled = false
+local WeaponController = nil
+pcall(function()
+    WeaponController = require(ReplicatedStorage.Client.Controllers.WeaponController)
+end)
 
-local originalLightingValues = {
-	FogStart = nil,
-	FogEnd = nil,
-	FogColor = nil,
-	Ambient = nil,
-	OutdoorAmbient = nil,
-	Brightness = nil,
-	ColorShift_Top = nil,
-	ColorShift_Bottom = nil,
-    AtmosphereInstance = nil,
-    AtmosphereDensity = nil,
-    AtmosphereOffset = nil,
-    AtmosphereHaze = nil,
-    AtmosphereColor = nil,
-}
-local lightingPropertiesStored = {
-    Fog = false,
-    Brightness = false,
-    Atmosphere = false,
+local Settings = {
+    instantHeal = false,
+    instantInteract = false,
+    noFog = false,
+    fullBright = false,
+    noSpread = false,
+    autoReload = false,
+    instantReload = false
 }
 
-local function SafeDestroy(instance)
-    if instance and instance.Parent then
-        pcall(function() instance:Destroy() end)
-    end
-end
+local Connections = {}
+local LightingBackup = {
+    stored = {
+        fog = false,
+        brightness = false,
+        atmosphere = false
+    }
+}
 
-function IsValid(instance)
+local originalNamecall = nil
+
+local function isValid(instance)
     return instance and instance.Parent ~= nil
 end
+
+local bandageRenderStepConnection = nil
 
 local function instantHeal()
     local character = LocalPlayer.Character
     if not character then return false end
+    
     local bandage = character:FindFirstChild("Bandage")
     if not bandage then return false end
+    
     local useRemote = bandage:FindFirstChild("Use")
     if not useRemote or not useRemote:IsA("RemoteEvent") then return false end
+    
     local success = pcall(function() useRemote:FireServer() end)
-    if not success then warn("Failed to fire Bandage 'Use' remote.") end
     return success
 end
 
-local bandageRenderStepConnection = nil
-local function patchBandageSystem()
-    local success, bandageUI = pcall(function() return LocalPlayer.PlayerGui:WaitForChild("BandageUse", 5) end)
-    if not success or not bandageUI then warn("Failed to find BandageUse GUI"); return end
+local function setupBandageSystem()
+    if bandageRenderStepConnection then 
+        bandageRenderStepConnection:Disconnect()
+        bandageRenderStepConnection = nil
+    end
+    
+    local success, bandageUI = pcall(function() 
+        return LocalPlayer.PlayerGui:WaitForChild("BandageUse", 5) 
+    end)
+    
+    if not success or not bandageUI then return end
+    
     local lineFrame = bandageUI:FindFirstChild("LineFrame", true)
     local fillBar = lineFrame and lineFrame:FindFirstChild("Fill")
-    if not fillBar then warn("Failed to find Bandage Fill Bar") end
-    if bandageRenderStepConnection then bandageRenderStepConnection:Disconnect(); bandageRenderStepConnection = nil end
+    
     bandageRenderStepConnection = RunService:BindToRenderStep("InstantBandage", Enum.RenderPriority.Camera.Value + 1, function()
-        if InstantHeal_Enabled and bandageUI.Enabled then
-            local uiVisible = bandageUI.Enabled
+        if Settings.instantHeal and bandageUI.Enabled then
             if fillBar then pcall(function() fillBar.Size = UDim2.new(1, 0, 1, 0) end) end
             local healed = instantHeal()
-            if healed then pcall(function() bandageUI.Enabled = false end) elseif uiVisible then end
+            if healed then pcall(function() bandageUI.Enabled = false end) end
         end
     end)
 end
 
 local function modifyProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
+    
     local success = pcall(function()
         local originalDuration = prompt.HoldDuration
-        if not prompt:GetAttribute("OriginalHoldDuration") then prompt:SetAttribute("OriginalHoldDuration", originalDuration) end
-        if InstantInteract_Enabled then prompt.HoldDuration = 0.05 end
+        if not prompt:GetAttribute("OriginalHoldDuration") then
+            prompt:SetAttribute("OriginalHoldDuration", originalDuration)
+        end
+        if Settings.instantInteract then prompt.HoldDuration = 0.05 end
     end)
-    if not success then warn("Failed to modify prompt:", prompt:GetFullName()) end
 end
 
 local function restoreProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
-     local success = pcall(function()
+    
+    local success = pcall(function()
         local originalDuration = prompt:GetAttribute("OriginalHoldDuration")
         if originalDuration then prompt.HoldDuration = originalDuration end
     end)
-    if not success then warn("Failed to restore prompt:", prompt:GetFullName()) end
 end
 
 local function updateAllProximityPrompts()
     for _, descendant in pairs(Workspace:GetDescendants()) do
         if descendant:IsA("ProximityPrompt") then
-            if InstantInteract_Enabled then modifyProximityPrompt(descendant) else restoreProximityPrompt(descendant) end
+            if Settings.instantInteract then 
+                modifyProximityPrompt(descendant) 
+            else 
+                restoreProximityPrompt(descendant) 
+            end
         end
     end
 end
 
-local function StoreOriginalLighting(type)
-    if type == "Fog" and not lightingPropertiesStored.Fog then
-        pcall(function() originalLightingValues.FogStart = Lighting.FogStart end)
-        pcall(function() originalLightingValues.FogEnd = Lighting.FogEnd end)
-        pcall(function() originalLightingValues.FogColor = Lighting.FogColor end)
-        lightingPropertiesStored.Fog = true
-    elseif type == "Brightness" and not lightingPropertiesStored.Brightness then
-        pcall(function() originalLightingValues.Ambient = Lighting.Ambient end)
-        pcall(function() originalLightingValues.OutdoorAmbient = Lighting.OutdoorAmbient end)
-        pcall(function() originalLightingValues.Brightness = Lighting.Brightness end)
-        pcall(function() originalLightingValues.ColorShift_Top = Lighting.ColorShift_Top end)
-        pcall(function() originalLightingValues.ColorShift_Bottom = Lighting.ColorShift_Bottom end)
-        lightingPropertiesStored.Brightness = true
-    elseif type == "Atmosphere" and not lightingPropertiesStored.Atmosphere then
+local function storeOriginalLighting(type)
+    if type == "Fog" and not LightingBackup.stored.fog then
+        pcall(function() LightingBackup.fogStart = Lighting.FogStart end)
+        pcall(function() LightingBackup.fogEnd = Lighting.FogEnd end)
+        pcall(function() LightingBackup.fogColor = Lighting.FogColor end)
+        LightingBackup.stored.fog = true
+    elseif type == "Brightness" and not LightingBackup.stored.brightness then
+        pcall(function() LightingBackup.ambient = Lighting.Ambient end)
+        pcall(function() LightingBackup.outdoorAmbient = Lighting.OutdoorAmbient end)
+        pcall(function() LightingBackup.brightness = Lighting.Brightness end)
+        pcall(function() LightingBackup.colorShiftTop = Lighting.ColorShift_Top end)
+        pcall(function() LightingBackup.colorShiftBottom = Lighting.ColorShift_Bottom end)
+        LightingBackup.stored.brightness = true
+    elseif type == "Atmosphere" and not LightingBackup.stored.atmosphere then
         local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
         if atmosphere then
-            originalLightingValues.AtmosphereInstance = atmosphere
-            pcall(function() originalLightingValues.AtmosphereDensity = atmosphere.Density end)
-            pcall(function() originalLightingValues.AtmosphereOffset = atmosphere.Offset end)
-            pcall(function() originalLightingValues.AtmosphereHaze = atmosphere.Haze end)
-            pcall(function() originalLightingValues.AtmosphereColor = atmosphere.Color end)
-            lightingPropertiesStored.Atmosphere = true
+            LightingBackup.atmosphere = atmosphere
+            pcall(function() LightingBackup.atmosphereDensity = atmosphere.Density end)
+            pcall(function() LightingBackup.atmosphereOffset = atmosphere.Offset end)
+            pcall(function() LightingBackup.atmosphereHaze = atmosphere.Haze end)
+            pcall(function() LightingBackup.atmosphereColor = atmosphere.Color end)
+            LightingBackup.stored.atmosphere = true
         end
     end
 end
 
-local function ApplyNoFog()
+local function applyNoFog()
     pcall(function() Lighting.FogStart = 1000000 end)
     pcall(function() Lighting.FogEnd = 2000000 end)
+    
     local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
     if atmosphere then
         pcall(function() atmosphere.Density = 0 end)
@@ -139,55 +151,114 @@ local function ApplyNoFog()
     end
 end
 
-local function RestoreNoFog()
-    if lightingPropertiesStored.Fog then
-        pcall(function() Lighting.FogStart = originalLightingValues.FogStart end)
-        pcall(function() Lighting.FogEnd = originalLightingValues.FogEnd end)
-        pcall(function() Lighting.FogColor = originalLightingValues.FogColor end)
+local function restoreNoFog()
+    if LightingBackup.stored.fog then
+        pcall(function() Lighting.FogStart = LightingBackup.fogStart end)
+        pcall(function() Lighting.FogEnd = LightingBackup.fogEnd end)
+        pcall(function() Lighting.FogColor = LightingBackup.fogColor end)
     end
-    if lightingPropertiesStored.Atmosphere and IsValid(originalLightingValues.AtmosphereInstance) then
-        local atmosphere = originalLightingValues.AtmosphereInstance
-        pcall(function() atmosphere.Density = originalLightingValues.AtmosphereDensity end)
-        pcall(function() atmosphere.Offset = originalLightingValues.AtmosphereOffset end)
-        pcall(function() atmosphere.Haze = originalLightingValues.AtmosphereHaze end)
-        pcall(function() atmosphere.Color = originalLightingValues.AtmosphereColor end)
+    
+    if LightingBackup.stored.atmosphere and isValid(LightingBackup.atmosphere) then
+        local atmosphere = LightingBackup.atmosphere
+        pcall(function() atmosphere.Density = LightingBackup.atmosphereDensity end)
+        pcall(function() atmosphere.Offset = LightingBackup.atmosphereOffset end)
+        pcall(function() atmosphere.Haze = LightingBackup.atmosphereHaze end)
+        pcall(function() atmosphere.Color = LightingBackup.atmosphereColor end)
     end
 end
 
-local function ApplyFullBright()
+local function applyFullBright()
     pcall(function() Lighting.Ambient = Color3.fromRGB(180, 180, 180) end)
     pcall(function() Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180) end)
     pcall(function() Lighting.Brightness = 2 end)
     pcall(function() Lighting.ColorShift_Top = Color3.fromRGB(0, 0, 0) end)
     pcall(function() Lighting.ColorShift_Bottom = Color3.fromRGB(0, 0, 0) end)
+    
     local sky = Lighting:FindFirstChildOfClass("Sky") or Camera:FindFirstChildOfClass("Sky")
     if sky then pcall(function() sky.Brightness = 2 end) end
 end
 
-local function RestoreFullBright()
-    if lightingPropertiesStored.Brightness then
-        pcall(function() Lighting.Ambient = originalLightingValues.Ambient end)
-        pcall(function() Lighting.OutdoorAmbient = originalLightingValues.OutdoorAmbient end)
-        pcall(function() Lighting.Brightness = originalLightingValues.Brightness end)
-        pcall(function() Lighting.ColorShift_Top = originalLightingValues.ColorShift_Top end)
-        pcall(function() Lighting.ColorShift_Bottom = originalLightingValues.ColorShift_Bottom end)
+local function restoreFullBright()
+    if LightingBackup.stored.brightness then
+        pcall(function() Lighting.Ambient = LightingBackup.ambient end)
+        pcall(function() Lighting.OutdoorAmbient = LightingBackup.outdoorAmbient end)
+        pcall(function() Lighting.Brightness = LightingBackup.brightness end)
+        pcall(function() Lighting.ColorShift_Top = LightingBackup.colorShiftTop end)
+        pcall(function() Lighting.ColorShift_Bottom = LightingBackup.colorShiftBottom end)
     end
 end
 
-RunService.RenderStepped:Connect(function()
-    if NoFog_Enabled then
-        ApplyNoFog()
+local function setupNoSpread()
+    if originalNamecall then return end
+    
+    originalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        if Settings.noSpread and method == "FireServer" and self.Name == "Shoot" and typeof(args[3]) == "CFrame" then
+            args[3] = Camera.CFrame
+        end
+        
+        return originalNamecall(self, unpack(args))
+    end)
+end
+
+local function instantReload(weapon)
+    if not weapon or not WeaponController then return end
+    
+    pcall(function()
+        if weapon:FindFirstChild("ClientWeaponState") and weapon:FindFirstChild("WeaponConfiguration") then
+            local currentAmmo = weapon.ClientWeaponState:FindFirstChild("CurrentAmmo")
+            local isReloading = weapon.ClientWeaponState:FindFirstChild("IsReloading")
+            local magazineSize = weapon.WeaponConfiguration:FindFirstChild("MagazineSize")
+            
+            if currentAmmo and magazineSize then
+                WeaponController.ReloadGun(weapon)
+                
+                task.delay(0.1, function()
+                    if isReloading then isReloading.Value = false end
+                    if currentAmmo then currentAmmo.Value = magazineSize.Value end
+                end)
+            end
+        end
+    end)
+end
+
+local function checkAndReloadWeapons()
+    if not Settings.autoReload or not WeaponController then return end
+    
+    for _, weapon in pairs(CollectionService:GetTagged("Weapon")) do
+        if weapon:FindFirstChild("ClientWeaponState") and weapon:FindFirstChild("WeaponConfiguration") then
+            local currentAmmo = weapon.ClientWeaponState:FindFirstChild("CurrentAmmo")
+            local isReloading = weapon.ClientWeaponState:FindFirstChild("IsReloading")
+            local magazineSize = weapon.WeaponConfiguration:FindFirstChild("MagazineSize")
+            
+            if currentAmmo and isReloading and magazineSize and 
+               currentAmmo.Value < magazineSize.Value and 
+               not isReloading.Value then
+                pcall(function()
+                    WeaponController.ReloadGun(weapon)
+                end)
+            end
+        end
     end
-    if FullBright_Enabled then
-        ApplyFullBright()
-    end
+end
+
+Connections.renderStepped = RunService.RenderStepped:Connect(function()
+    if Settings.noFog then applyNoFog() end
+    if Settings.fullBright then applyFullBright() end
 end)
 
-Workspace.DescendantAdded:Connect(function(descendant)
-    if InstantInteract_Enabled and descendant:IsA("ProximityPrompt") then modifyProximityPrompt(descendant) end
-    if descendant:IsA("Atmosphere") and not lightingPropertiesStored.Atmosphere then
-        StoreOriginalLighting("Atmosphere")
-        if NoFog_Enabled then ApplyNoFog() end
+Connections.autoReloadHeartbeat = RunService.Heartbeat:Connect(checkAndReloadWeapons)
+
+Connections.descendantAdded = Workspace.DescendantAdded:Connect(function(descendant)
+    if Settings.instantInteract and descendant:IsA("ProximityPrompt") then 
+        modifyProximityPrompt(descendant)
+    end
+    
+    if descendant:IsA("Atmosphere") and not LightingBackup.stored.atmosphere then
+        storeOriginalLighting("Atmosphere")
+        if Settings.noFog then applyNoFog() end
     end
 end)
 
@@ -200,53 +271,71 @@ local Window = Rayfield:CreateWindow({
     Theme = "Default",
 })
 
-local WhatsNewTab = Window:CreateTab("Что нового?", "info")
+local WhatsNewTab = Window:CreateTab("Что нового?", 4483362458)
 WhatsNewTab:CreateParagraph({
     Title = "Список изменений",
-    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность\n30.03.2025 15:02 | Добавлена функция удаление тумана и полная яркость для ночи"
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность\n30.03.2025 15:02 | Добавлена функция удаление тумана и полная яркость для ночи\n30.03.2025 21:20 | Добавлены функции Нулевой разброс и Авто-перезарядка\n30.03.2025 21:53 | Добавлена ЭКСПЕРИМЕНТАЛЬНАЯ функция мгновенной перезарядки"
 })
 
-local MainTab = Window:CreateTab("Главное", "home")
+local MainTab = Window:CreateTab("Главное", 4483345998)
 
-MainTab:CreateToggle({ Name = "Мгновенное использование аптечки", CurrentValue = InstantHeal_Enabled, Flag = "InstantHealToggle", Callback = function(Value) InstantHeal_Enabled = Value end })
-MainTab:CreateToggle({ Name = "Быстрое взаимодействие", CurrentValue = InstantInteract_Enabled, Flag = "InstantInteractToggle", Callback = function(Value) InstantInteract_Enabled = Value; updateAllProximityPrompts() end })
+MainTab:CreateToggle({ 
+    Name = "Мгновенное использование аптечки", 
+    CurrentValue = Settings.instantHeal, 
+    Flag = "InstantHealToggle", 
+    Callback = function(Value) Settings.instantHeal = Value end 
+})
+
+MainTab:CreateToggle({ 
+    Name = "Быстрое взаимодействие", 
+    CurrentValue = Settings.instantInteract, 
+    Flag = "InstantInteractToggle", 
+    Callback = function(Value) 
+        Settings.instantInteract = Value
+        updateAllProximityPrompts() 
+    end 
+})
 
 MainTab:CreateToggle({
     Name = "Убрать туман",
-    CurrentValue = NoFog_Enabled,
+    CurrentValue = Settings.noFog,
     Flag = "NoFogToggle",
     Callback = function(Value)
-        NoFog_Enabled = Value
+        Settings.noFog = Value
         if Value then
-            StoreOriginalLighting("Fog")
-            StoreOriginalLighting("Atmosphere")
-            ApplyNoFog()
+            storeOriginalLighting("Fog")
+            storeOriginalLighting("Atmosphere")
+            applyNoFog()
         else
-            RestoreNoFog()
+            restoreNoFog()
         end
     end
 })
 
 MainTab:CreateToggle({
     Name = "Полная яркость",
-    CurrentValue = FullBright_Enabled,
+    CurrentValue = Settings.fullBright,
     Flag = "FullBrightToggle",
     Callback = function(Value)
-        FullBright_Enabled = Value
+        Settings.fullBright = Value
         if Value then
-            StoreOriginalLighting("Brightness")
-            ApplyFullBright()
+            storeOriginalLighting("Brightness")
+            applyFullBright()
         else
-            RestoreFullBright()
+            restoreFullBright()
         end
     end
 })
 
 MainTab:CreateSlider({
     Name = "Размер прицела",
-    Range = {0.1, 0.7}, Increment = 0.1, Suffix = "x", CurrentValue = 0.3, Flag = "CrosshairSizeSlider",
+    Range = {0.1, 0.7}, 
+    Increment = 0.1, 
+    Suffix = "x", 
+    CurrentValue = 0.3, 
+    Flag = "CrosshairSizeSlider",
     Callback = function(Value)
-        local success = pcall(function()
+        pcall(function()
             local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
             local crosshairUI = playerGui and playerGui:FindFirstChild("Crosshair")
             local crosshair = crosshairUI and crosshairUI:FindFirstChild("Crosshair")
@@ -259,12 +348,73 @@ MainTab:CreateSlider({
 
 MainTab:CreateSlider({
     Name = "Угол обзора",
-    Range = {70, 110}, Increment = 1, Suffix = "°", CurrentValue = defaultFOV, Flag = "FOVSlider",
+    Range = {70, 110}, 
+    Increment = 1, 
+    Suffix = "°", 
+    CurrentValue = defaultFOV, 
+    Flag = "FOVSlider",
     Callback = function(Value) Camera.FieldOfView = Value end
 })
 
-patchBandageSystem()
+-- нашел иконку в старых ресурсах, надеюсь пойдет
+local WeaponTab = Window:CreateTab("Оружие", 3517754538)
+
+WeaponTab:CreateToggle({
+    Name = "Нулевой разброс",
+    CurrentValue = Settings.noSpread,
+    Flag = "NoSpreadToggle",
+    Callback = function(Value)
+        Settings.noSpread = Value
+        if Value then
+            setupNoSpread()
+        end
+    end
+})
+
+WeaponTab:CreateToggle({
+    Name = "Авто-перезарядка (после каждого выстрела)",
+    CurrentValue = Settings.autoReload,
+    Flag = "AutoReloadToggle",
+    Callback = function(Value)
+        Settings.autoReload = Value
+    end
+})
+
+WeaponTab:CreateToggle({
+    Name = "Мгновенная перезарядка (рискованно)",
+    CurrentValue = Settings.instantReload,
+    Flag = "InstantReloadToggle",
+    Callback = function(Value)
+        Settings.instantReload = Value
+        
+        if Value then
+            Connections.instantReloadCheck = RunService.Heartbeat:Connect(function()
+                if LocalPlayer.Character then
+                    for _, weapon in pairs(CollectionService:GetTagged("Weapon")) do
+                        if weapon:IsDescendantOf(LocalPlayer.Character) and 
+                           weapon:FindFirstChild("ClientWeaponState") then
+                            local currentAmmo = weapon.ClientWeaponState:FindFirstChild("CurrentAmmo")
+                            local isReloading = weapon.ClientWeaponState:FindFirstChild("IsReloading")
+                            local magazineSize = weapon.WeaponConfiguration:FindFirstChild("MagazineSize")
+                            
+                            if currentAmmo and isReloading and magazineSize and 
+                               currentAmmo.Value < magazineSize.Value and
+                               isReloading.Value then
+                                instantReload(weapon)
+                            end
+                        end
+                    end
+                end
+            end)
+        elseif Connections.instantReloadCheck then
+            Connections.instantReloadCheck:Disconnect()
+            Connections.instantReloadCheck = nil
+        end
+    end
+})
+
+setupBandageSystem()
 updateAllProximityPrompts()
-StoreOriginalLighting("Fog")
-StoreOriginalLighting("Brightness")
-StoreOriginalLighting("Atmosphere")
+storeOriginalLighting("Fog")
+storeOriginalLighting("Brightness")
+storeOriginalLighting("Atmosphere")
