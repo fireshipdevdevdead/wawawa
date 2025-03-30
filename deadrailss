@@ -323,7 +323,7 @@ local Window = Rayfield:CreateWindow({
 local WhatsNewTab = Window:CreateTab("Что нового?", "info")
 WhatsNewTab:CreateParagraph({
     Title = "Список изменений",
-    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n | 30.03.2025 12:20 FIX: Улучшена стабильность ESP для NPC и предметов"
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность ESP для NPC и предметов"
 })
 
 local MainTab = Window:CreateTab("Главное", "home")
@@ -376,7 +376,7 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateColorPicker({
-    Name = "Цвет обводки предметов (ИГРОВОЙ)",
+    Name = "Цвет обводки предметов",
     Color = Color3.fromRGB(255, 255, 255),
     Flag = "OutlineColorPicker",
     Callback = function(Color)
