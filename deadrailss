@@ -11,11 +11,25 @@ local ESP_Enabled = false
 local ESP_Color = Color3.fromRGB(0, 255, 0)
 local ESP_Objects = {}
 
+local NPC_ESP_Enabled = false
+local NPC_ESP_Color = Color3.fromRGB(255, 0, 0)
+local NPC_ESP_Objects = {}
+
+local InstantHeal_Enabled = false
+local InstantInteract_Enabled = false
+
 local function ClearESP()
     for obj, data in pairs(ESP_Objects) do
         if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
     end
     ESP_Objects = {}
+end
+
+local function ClearNPCESP()
+    for npc, data in pairs(NPC_ESP_Objects) do
+        if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+    end
+    NPC_ESP_Objects = {}
 end
 
 local function CreateESP(obj)
@@ -39,11 +53,42 @@ local function CreateESP(obj)
     }
 end
 
+local function CreateNPCESP(npc)
+    if not npc:IsA("Model") or NPC_ESP_Objects[npc] then return end
+    
+    local humanoid = npc:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "NPC_ESP_Highlight"
+    highlight.Adornee = npc
+    highlight.FillColor = NPC_ESP_Color
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = NPC_ESP_Color
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = npc
+
+    NPC_ESP_Objects[npc] = {
+        Highlight = highlight,
+        Humanoid = humanoid
+    }
+end
+
 local function UpdateColors()
     for obj, data in pairs(ESP_Objects) do
         if data.Highlight then
             data.Highlight.FillColor = ESP_Color
             data.Highlight.OutlineColor = ESP_Color
+        end
+    end
+end
+
+local function UpdateNPCColors()
+    for npc, data in pairs(NPC_ESP_Objects) do
+        if data.Highlight then
+            data.Highlight.FillColor = NPC_ESP_Color
+            data.Highlight.OutlineColor = NPC_ESP_Color
         end
     end
 end
@@ -58,6 +103,90 @@ local function UpdateESP()
     end
 end
 
+local function UpdateNPCESP()
+    ClearNPCESP()
+    for _, npc in pairs(workspace:GetDescendants()) do
+        if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(npc) then
+            CreateNPCESP(npc)
+        end
+    end
+end
+
+local function instantHeal()
+    local character = LocalPlayer.Character
+    if not character then return false end
+    
+    local bandage = character:FindFirstChild("Bandage")
+    if not bandage then return false end
+    
+    local useRemote = bandage:FindFirstChild("Use")
+    if not useRemote then return false end
+    
+    useRemote:FireServer()
+    return true
+end
+
+local function patchBandageSystem()
+    local success, bandageUI = pcall(function()
+        return LocalPlayer.PlayerGui.BandageUse
+    end)
+    
+    if success and bandageUI then
+        bandageUI:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if InstantHeal_Enabled and bandageUI.Enabled then
+                wait()
+                instantHeal()
+                bandageUI.Enabled = false
+            end
+        end)
+        
+        local lineFrame = bandageUI:FindFirstChild("LineFrame", true)
+        if lineFrame and lineFrame:FindFirstChild("Fill") then
+            local fillBar = lineFrame.Fill
+            
+            RunService:BindToRenderStep("InstantBandage", Enum.RenderPriority.Camera.Value + 1, function()
+                if InstantHeal_Enabled and bandageUI.Enabled then
+                    fillBar.Size = UDim2.new(1, 0, 1, 0)
+                    instantHeal()
+                    bandageUI.Enabled = false
+                end
+            end)
+        end
+    end
+end
+
+local function modifyProximityPrompt(prompt)
+    if not prompt:IsA("ProximityPrompt") then return end
+    
+    local originalDuration = prompt.HoldDuration
+    prompt:SetAttribute("OriginalHoldDuration", originalDuration)
+    
+    if InstantInteract_Enabled then
+        prompt.HoldDuration = 0.1
+    end
+end
+
+local function restoreProximityPrompt(prompt)
+    if not prompt:IsA("ProximityPrompt") then return end
+    
+    local originalDuration = prompt:GetAttribute("OriginalHoldDuration")
+    if originalDuration then
+        prompt.HoldDuration = originalDuration
+    end
+end
+
+local function updateAllProximityPrompts()
+    for _, prompt in pairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            if InstantInteract_Enabled then
+                modifyProximityPrompt(prompt)
+            else
+                restoreProximityPrompt(prompt)
+            end
+        end
+    end
+end
+
 RunService.RenderStepped:Connect(function()
     if ESP_Enabled then
         for obj, data in pairs(ESP_Objects) do
@@ -65,6 +194,17 @@ RunService.RenderStepped:Connect(function()
                 ClearESP()
                 UpdateESP()
                 break
+            end
+        end
+    end
+    
+    if NPC_ESP_Enabled then
+        for npc, data in pairs(NPC_ESP_Objects) do
+            if not npc:IsDescendantOf(workspace) or (data.Humanoid and data.Humanoid.Health <= 0) then
+                if data.Highlight then
+                    data.Highlight:Destroy()
+                end
+                NPC_ESP_Objects[npc] = nil
             end
         end
     end
@@ -81,6 +221,16 @@ CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(o
     end
 end)
 
+workspace.DescendantAdded:Connect(function(desc)
+    if NPC_ESP_Enabled and desc:IsA("Model") and desc:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(desc) then
+        CreateNPCESP(desc)
+    end
+    
+    if desc:IsA("ProximityPrompt") and InstantInteract_Enabled then
+        modifyProximityPrompt(desc)
+    end
+end)
+
 local defaultFOV = math.clamp(Camera.FieldOfView, 70, 110)
 
 local Window = Rayfield:CreateWindow({
@@ -90,10 +240,17 @@ local Window = Rayfield:CreateWindow({
     Theme = "Default",
 })
 
+local WhatsNewTab = Window:CreateTab("Что нового?", "info")
+
+WhatsNewTab:CreateParagraph({
+    Title = "Список изменений", 
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n | а ещё скинь дз которые ты знаешь на завтра пж"
+})
+
 local MainTab = Window:CreateTab("Главное", "home")
 
 MainTab:CreateToggle({
-    Name = "Включить ESP (Highlight)",
+    Name = "ESP для предметов",
     CurrentValue = false,
     Flag = "ToggleESP",
     Callback = function(Value)
@@ -103,6 +260,39 @@ MainTab:CreateToggle({
         else
             ClearESP()
         end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "ESP для NPC",
+    CurrentValue = false,
+    Flag = "ToggleNPCESP",
+    Callback = function(Value)
+        NPC_ESP_Enabled = Value
+        if Value then
+            UpdateNPCESP()
+        else
+            ClearNPCESP()
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Мгновенное использование аптечки",
+    CurrentValue = false,
+    Flag = "InstantHealToggle",
+    Callback = function(Value)
+        InstantHeal_Enabled = Value
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Быстрое взаимодействие",
+    CurrentValue = false,
+    Flag = "InstantInteractToggle",
+    Callback = function(Value)
+        InstantInteract_Enabled = Value
+        updateAllProximityPrompts()
     end
 })
 
@@ -156,7 +346,7 @@ MainTab:CreateSlider({
 local SettingsTab = Window:CreateTab("Настройки", "settings")
 
 SettingsTab:CreateColorPicker({
-    Name = "Цвет подсветки ESP",
+    Name = "Цвет подсветки ESP предметов",
     Color = ESP_Color,
     Flag = "ESPColor",
     Callback = function(Color)
@@ -164,3 +354,15 @@ SettingsTab:CreateColorPicker({
         UpdateColors()
     end
 })
+
+SettingsTab:CreateColorPicker({
+    Name = "Цвет подсветки ESP NPC",
+    Color = NPC_ESP_Color,
+    Flag = "NPCESPColor",
+    Callback = function(Color)
+        NPC_ESP_Color = Color
+        UpdateNPCColors()
+    end
+})
+
+patchBandageSystem()
