@@ -1,7 +1,6 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -9,14 +8,6 @@ local Lighting = game:GetService("Lighting")
 
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
-
-local ESP_Enabled = false
-local ESP_Color = Color3.fromRGB(0, 255, 0)
-local ESP_Objects = {}
-
-local NPC_ESP_Enabled = false
-local NPC_ESP_Color = Color3.fromRGB(255, 0, 0)
-local NPC_ESP_Objects = {}
 
 local InstantHeal_Enabled = false
 local InstantInteract_Enabled = false
@@ -52,119 +43,6 @@ end
 
 function IsValid(instance)
     return instance and instance.Parent ~= nil
-end
-
-local function ClearESP(obj)
-    if obj then
-        local data = ESP_Objects[obj]
-        if data then
-            SafeDestroy(data.Highlight)
-            ESP_Objects[obj] = nil
-        end
-    else
-        for objInstance, data in pairs(ESP_Objects) do
-            SafeDestroy(data.Highlight)
-        end
-        ESP_Objects = {}
-    end
-end
-
-local function ClearNPCESP(npc)
-    if npc then
-        local data = NPC_ESP_Objects[npc]
-        if data then
-            SafeDestroy(data.Highlight)
-            NPC_ESP_Objects[npc] = nil
-        end
-    else
-        for npcInstance, data in pairs(NPC_ESP_Objects) do
-            SafeDestroy(data.Highlight)
-        end
-        NPC_ESP_Objects = {}
-    end
-end
-
-local function CreateESP(obj)
-    if not IsValid(obj) or not obj:IsA("Model") or ESP_Objects[obj] then return end
-    local success, result = pcall(function()
-        local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-        if not primaryPart then return nil end
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "Rayfield_ESP_Highlight"
-        highlight.Adornee = obj
-        highlight.FillColor = ESP_Color
-        highlight.FillTransparency = 0.5
-        highlight.OutlineColor = ESP_Color
-        highlight.OutlineTransparency = 0
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.Parent = obj
-        return highlight
-    end)
-    if success and result then
-        ESP_Objects[obj] = { Highlight = result }
-    elseif not success then
-        warn("[ESP Error] Failed to create highlight for", obj:GetFullName(), ":", result)
-    end
-end
-
-local function CreateNPCESP(npc)
-    if not IsValid(npc) or not npc:IsA("Model") or NPC_ESP_Objects[npc] or Players:GetPlayerFromCharacter(npc) then return end
-    local humanoid = npc:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    if npc:FindFirstChild("Rayfield_NPC_ESP_Highlight") then return end
-    local success, result = pcall(function()
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "Rayfield_NPC_ESP_Highlight"
-        highlight.Adornee = npc
-        highlight.FillColor = NPC_ESP_Color
-        highlight.FillTransparency = 0.5
-        highlight.OutlineColor = NPC_ESP_Color
-        highlight.OutlineTransparency = 0
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.Parent = npc
-        return { Highlight = highlight, Humanoid = humanoid }
-    end)
-    if success and result then
-        NPC_ESP_Objects[npc] = result
-    elseif not success then
-        warn("[NPC ESP Error] Failed to create highlight for", npc:GetFullName(), ":", result)
-    end
-end
-
-local function UpdateColors()
-    for obj, data in pairs(ESP_Objects) do
-        if IsValid(data.Highlight) then
-            pcall(function()
-                data.Highlight.FillColor = ESP_Color
-                data.Highlight.OutlineColor = ESP_Color
-            end)
-        else ESP_Objects[obj] = nil end
-    end
-end
-
-local function UpdateNPCColors()
-    for npc, data in pairs(NPC_ESP_Objects) do
-        if IsValid(data.Highlight) then
-             pcall(function()
-                data.Highlight.FillColor = NPC_ESP_Color
-                data.Highlight.OutlineColor = NPC_ESP_Color
-             end)
-        else NPC_ESP_Objects[npc] = nil end
-    end
-end
-
-local function UpdateESP()
-    ClearESP()
-    if not ESP_Enabled then return end
-    for _, obj in pairs(CollectionService:GetTagged("DraggableObject")) do CreateESP(obj) end
-end
-
-local function UpdateNPCESP()
-    ClearNPCESP()
-    if not NPC_ESP_Enabled then return end
-    for _, potentialNPC in pairs(Workspace:GetChildren()) do
-         if potentialNPC:IsA("Model") then CreateNPCESP(potentialNPC) end
-    end
 end
 
 local function instantHeal()
@@ -297,17 +175,6 @@ local function RestoreFullBright()
 end
 
 RunService.RenderStepped:Connect(function()
-    if ESP_Enabled then
-        for obj, data in pairs(ESP_Objects) do
-            if not IsValid(obj) or not obj:IsDescendantOf(Workspace) or not IsValid(data.Highlight) then ClearESP(obj) end
-        end
-    end
-    if NPC_ESP_Enabled then
-        for npc, data in pairs(NPC_ESP_Objects) do
-            if not IsValid(npc) or not npc:IsDescendantOf(Workspace) or not IsValid(data.Highlight) or not IsValid(data.Humanoid) or data.Humanoid.Health <= 0 then ClearNPCESP(npc) end
-        end
-    end
-
     if NoFog_Enabled then
         ApplyNoFog()
     end
@@ -316,16 +183,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-CollectionService:GetInstanceAddedSignal("DraggableObject"):Connect(function(obj)
-    if ESP_Enabled then task.wait(); CreateESP(obj) end
-end)
-
-CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(obj)
-    ClearESP(obj)
-end)
-
 Workspace.DescendantAdded:Connect(function(descendant)
-    if NPC_ESP_Enabled and descendant:IsA("Model") then task.defer(CreateNPCESP, descendant) end
     if InstantInteract_Enabled and descendant:IsA("ProximityPrompt") then modifyProximityPrompt(descendant) end
     if descendant:IsA("Atmosphere") and not lightingPropertiesStored.Atmosphere then
         StoreOriginalLighting("Atmosphere")
@@ -345,13 +203,10 @@ local Window = Rayfield:CreateWindow({
 local WhatsNewTab = Window:CreateTab("Что нового?", "info")
 WhatsNewTab:CreateParagraph({
     Title = "Список изменений",
-    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность ESP\n30.03.2025 15:02 | Добавлена функция удаление тумана и полная яркость для ночи"
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил быстрое взаимодействие\n30.03.2025 12:20 | FIX: Улучшена стабильность\n30.03.2025 15:02 | Добавлена функция удаление тумана и полная яркость для ночи"
 })
 
 local MainTab = Window:CreateTab("Главное", "home")
-
-MainTab:CreateToggle({ Name = "ESP для предметов", CurrentValue = ESP_Enabled, Flag = "ToggleESP", Callback = function(Value) ESP_Enabled = Value; if Value then UpdateESP() else ClearESP() end end })
-MainTab:CreateToggle({ Name = "ESP для NPC", CurrentValue = NPC_ESP_Enabled, Flag = "ToggleNPCESP", Callback = function(Value) NPC_ESP_Enabled = Value; if Value then UpdateNPCESP() else ClearNPCESP() end end })
 
 MainTab:CreateToggle({ Name = "Мгновенное использование аптечки", CurrentValue = InstantHeal_Enabled, Flag = "InstantHealToggle", Callback = function(Value) InstantHeal_Enabled = Value end })
 MainTab:CreateToggle({ Name = "Быстрое взаимодействие", CurrentValue = InstantInteract_Enabled, Flag = "InstantInteractToggle", Callback = function(Value) InstantInteract_Enabled = Value; updateAllProximityPrompts() end })
@@ -387,27 +242,6 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateColorPicker({
-    Name = "Цвет обводки предметов",
-    Color = Color3.fromRGB(255, 255, 255),
-    Flag = "OutlineColorPicker",
-    Callback = function(Color)
-        local success = pcall(function()
-            local highlight = ReplicatedStorage:FindFirstChild("Client", 1)
-                and ReplicatedStorage.Client:FindFirstChild("Handlers", 1)
-                and ReplicatedStorage.Client.Handlers:FindFirstChild("DraggableItemHandlers", 1)
-                and ReplicatedStorage.Client.Handlers.DraggableItemHandlers:FindFirstChild("ClientDraggableObjectHandler", 1)
-                and ReplicatedStorage.Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler:FindFirstChild("DragHighlight")
-            if highlight and highlight:IsA("Highlight") then
-                highlight.OutlineColor = Color
-            else
-                warn("Game's DragHighlight not found.")
-            end
-        end)
-        if not success then warn("Error accessing game's DragHighlight.") end
-    end
-})
-
 MainTab:CreateSlider({
     Name = "Размер прицела",
     Range = {0.1, 0.7}, Increment = 0.1, Suffix = "x", CurrentValue = 0.3, Flag = "CrosshairSizeSlider",
@@ -424,15 +258,10 @@ MainTab:CreateSlider({
 })
 
 MainTab:CreateSlider({
-    Name = "Угол обзора (FOV)",
+    Name = "Угол обзора",
     Range = {70, 110}, Increment = 1, Suffix = "°", CurrentValue = defaultFOV, Flag = "FOVSlider",
     Callback = function(Value) Camera.FieldOfView = Value end
 })
-
-local SettingsTab = Window:CreateTab("Настройки", "settings")
-
-SettingsTab:CreateColorPicker({ Name = "Цвет подсветки ESP предметов", Color = ESP_Color, Flag = "ESPColor", Callback = function(Color) ESP_Color = Color; UpdateColors() end })
-SettingsTab:CreateColorPicker({ Name = "Цвет подсветки ESP NPC", Color = NPC_ESP_Color, Flag = "NPCESPColor", Callback = function(Color) NPC_ESP_Color = Color; UpdateNPCColors() end })
 
 patchBandageSystem()
 updateAllProximityPrompts()
