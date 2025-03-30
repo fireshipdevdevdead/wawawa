@@ -4,7 +4,8 @@ local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Camera = workspace.CurrentCamera
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
 local ESP_Enabled = false
@@ -18,170 +19,250 @@ local NPC_ESP_Objects = {}
 local InstantHeal_Enabled = false
 local InstantInteract_Enabled = false
 
-local function ClearESP()
-    for obj, data in pairs(ESP_Objects) do
-        if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+local function SafeDestroy(instance)
+    if instance and instance.Parent then
+        pcall(function() instance:Destroy() end)
     end
-    ESP_Objects = {}
 end
 
-local function ClearNPCESP()
-    for npc, data in pairs(NPC_ESP_Objects) do
-        if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+local function ClearESP(obj)
+    if obj then
+        local data = ESP_Objects[obj]
+        if data then
+            SafeDestroy(data.Highlight)
+            ESP_Objects[obj] = nil
+        end
+    else
+        for objInstance, data in pairs(ESP_Objects) do
+            SafeDestroy(data.Highlight)
+        end
+        ESP_Objects = {}
     end
-    NPC_ESP_Objects = {}
+end
+
+local function ClearNPCESP(npc)
+    if npc then
+        local data = NPC_ESP_Objects[npc]
+        if data then
+            SafeDestroy(data.Highlight)
+            NPC_ESP_Objects[npc] = nil
+        end
+    else
+        for npcInstance, data in pairs(NPC_ESP_Objects) do
+            SafeDestroy(data.Highlight)
+        end
+        NPC_ESP_Objects = {}
+    end
 end
 
 local function CreateESP(obj)
-    if not obj:IsA("Model") or ESP_Objects[obj] then return end
+    if not IsValid(obj) or not obj:IsA("Model") or ESP_Objects[obj] then return end
 
-    local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-    if not primaryPart then return end
+    local success, result = pcall(function()
+        local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        if not primaryPart then return nil end
 
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "ESP_Highlight"
-    highlight.Adornee = obj
-    highlight.FillColor = ESP_Color
-    highlight.FillTransparency = 0.5
-    highlight.OutlineColor = ESP_Color
-    highlight.OutlineTransparency = 0
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = obj
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "Rayfield_ESP_Highlight"
+        highlight.Adornee = obj
+        highlight.FillColor = ESP_Color
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = ESP_Color
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = obj
 
-    ESP_Objects[obj] = {
-        Highlight = highlight
-    }
+        return highlight
+    end)
+
+    if success and result then
+        ESP_Objects[obj] = { Highlight = result }
+    elseif not success then
+        warn("[ESP Error] Failed to create highlight for", obj:GetFullName(), ":", result)
+    end
 end
 
 local function CreateNPCESP(npc)
-    if not npc:IsA("Model") or NPC_ESP_Objects[npc] then return end
-    
+    if not IsValid(npc) or not npc:IsA("Model") or NPC_ESP_Objects[npc] or Players:GetPlayerFromCharacter(npc) then
+        return
+    end
+
     local humanoid = npc:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
+    if not humanoid or humanoid.Health <= 0 then
+        return
+    end
 
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "NPC_ESP_Highlight"
-    highlight.Adornee = npc
-    highlight.FillColor = NPC_ESP_Color
-    highlight.FillTransparency = 0.5
-    highlight.OutlineColor = NPC_ESP_Color
-    highlight.OutlineTransparency = 0
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = npc
+    if npc:FindFirstChild("Rayfield_NPC_ESP_Highlight") then
+         return
+    end
 
-    NPC_ESP_Objects[npc] = {
-        Highlight = highlight,
-        Humanoid = humanoid
-    }
+    local success, result = pcall(function()
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "Rayfield_NPC_ESP_Highlight"
+        highlight.Adornee = npc
+        highlight.FillColor = NPC_ESP_Color
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = NPC_ESP_Color
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = npc
+
+        return { Highlight = highlight, Humanoid = humanoid }
+    end)
+
+    if success and result then
+        NPC_ESP_Objects[npc] = result
+    elseif not success then
+        warn("[NPC ESP Error] Failed to create highlight for", npc:GetFullName(), ":", result)
+    end
 end
 
 local function UpdateColors()
     for obj, data in pairs(ESP_Objects) do
-        if data.Highlight then
-            data.Highlight.FillColor = ESP_Color
-            data.Highlight.OutlineColor = ESP_Color
+        if IsValid(data.Highlight) then
+            pcall(function()
+                data.Highlight.FillColor = ESP_Color
+                data.Highlight.OutlineColor = ESP_Color
+            end)
+        else
+             ESP_Objects[obj] = nil
         end
     end
 end
 
 local function UpdateNPCColors()
     for npc, data in pairs(NPC_ESP_Objects) do
-        if data.Highlight then
-            data.Highlight.FillColor = NPC_ESP_Color
-            data.Highlight.OutlineColor = NPC_ESP_Color
+        if IsValid(data.Highlight) then
+             pcall(function()
+                data.Highlight.FillColor = NPC_ESP_Color
+                data.Highlight.OutlineColor = NPC_ESP_Color
+             end)
+        else
+            NPC_ESP_Objects[npc] = nil
         end
     end
 end
 
 local function UpdateESP()
     ClearESP()
+    if not ESP_Enabled then return end
+
     for _, obj in pairs(CollectionService:GetTagged("DraggableObject")) do
-        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-        if part then
-            CreateESP(obj)
-        end
+        CreateESP(obj)
     end
 end
 
 local function UpdateNPCESP()
     ClearNPCESP()
-    for _, npc in pairs(workspace:GetDescendants()) do
-        if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(npc) then
-            CreateNPCESP(npc)
-        end
+    if not NPC_ESP_Enabled then return end
+
+    for _, potentialNPC in pairs(Workspace:GetChildren()) do
+         if potentialNPC:IsA("Model") then
+              CreateNPCESP(potentialNPC)
+         end
     end
+    --[[
+     for _, descendant in pairs(Workspace:GetDescendants()) do
+         if descendant:IsA("Model") then
+             CreateNPCESP(descendant)
+         end
+     end
+     --]]
 end
 
 local function instantHeal()
     local character = LocalPlayer.Character
     if not character then return false end
-    
+
     local bandage = character:FindFirstChild("Bandage")
     if not bandage then return false end
-    
+
     local useRemote = bandage:FindFirstChild("Use")
-    if not useRemote then return false end
-    
-    useRemote:FireServer()
-    return true
+    if not useRemote or not useRemote:IsA("RemoteEvent") then return false end
+
+    local success = pcall(function() useRemote:FireServer() end)
+    if not success then warn("Failed to fire Bandage 'Use' remote.") end
+    return success
 end
 
+local bandageRenderStepConnection = nil
 local function patchBandageSystem()
     local success, bandageUI = pcall(function()
-        return LocalPlayer.PlayerGui.BandageUse
+        return LocalPlayer.PlayerGui:WaitForChild("BandageUse", 5)
     end)
-    
-    if success and bandageUI then
-        bandageUI:GetPropertyChangedSignal("Enabled"):Connect(function()
-            if InstantHeal_Enabled and bandageUI.Enabled then
-                wait()
-                instantHeal()
-                bandageUI.Enabled = false
-            end
-        end)
-        
-        local lineFrame = bandageUI:FindFirstChild("LineFrame", true)
-        if lineFrame and lineFrame:FindFirstChild("Fill") then
-            local fillBar = lineFrame.Fill
-            
-            RunService:BindToRenderStep("InstantBandage", Enum.RenderPriority.Camera.Value + 1, function()
-                if InstantHeal_Enabled and bandageUI.Enabled then
-                    fillBar.Size = UDim2.new(1, 0, 1, 0)
-                    instantHeal()
-                    bandageUI.Enabled = false
-                end
-            end)
-        end
+
+    if not success or not bandageUI then
+        warn("Failed to find BandageUse GUI")
+        return
     end
+
+    local lineFrame = bandageUI:FindFirstChild("LineFrame", true)
+    local fillBar = lineFrame and lineFrame:FindFirstChild("Fill")
+
+    if not fillBar then
+        warn("Failed to find Bandage Fill Bar")
+    end
+
+    if bandageRenderStepConnection then
+        bandageRenderStepConnection:Disconnect()
+        bandageRenderStepConnection = nil
+    end
+
+    bandageRenderStepConnection = RunService:BindToRenderStep("InstantBandage", Enum.RenderPriority.Camera.Value + 1, function()
+        if InstantHeal_Enabled and bandageUI.Enabled then
+            local uiVisible = bandageUI.Enabled
+
+            if fillBar then
+                 pcall(function() fillBar.Size = UDim2.new(1, 0, 1, 0) end)
+            end
+
+            local healed = instantHeal()
+
+            if healed then
+                 pcall(function() bandageUI.Enabled = false end)
+            elseif uiVisible then
+
+            end
+        end
+    end)
 end
 
 local function modifyProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
-    
-    local originalDuration = prompt.HoldDuration
-    prompt:SetAttribute("OriginalHoldDuration", originalDuration)
-    
-    if InstantInteract_Enabled then
-        prompt.HoldDuration = 0.1
-    end
+
+    local success = pcall(function()
+        local originalDuration = prompt.HoldDuration
+        if not prompt:GetAttribute("OriginalHoldDuration") then
+            prompt:SetAttribute("OriginalHoldDuration", originalDuration)
+        end
+
+        if InstantInteract_Enabled then
+            prompt.HoldDuration = 0.05
+        end
+    end)
+    if not success then warn("Failed to modify prompt:", prompt:GetFullName()) end
 end
 
 local function restoreProximityPrompt(prompt)
     if not prompt:IsA("ProximityPrompt") then return end
-    
-    local originalDuration = prompt:GetAttribute("OriginalHoldDuration")
-    if originalDuration then
-        prompt.HoldDuration = originalDuration
-    end
+
+     local success = pcall(function()
+        local originalDuration = prompt:GetAttribute("OriginalHoldDuration")
+        if originalDuration then
+            prompt.HoldDuration = originalDuration
+
+        end
+    end)
+    if not success then warn("Failed to restore prompt:", prompt:GetFullName()) end
 end
 
 local function updateAllProximityPrompts()
-    for _, prompt in pairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
+    for _, descendant in pairs(Workspace:GetDescendants()) do
+        if descendant:IsA("ProximityPrompt") then
             if InstantInteract_Enabled then
-                modifyProximityPrompt(prompt)
+                modifyProximityPrompt(descendant)
             else
-                restoreProximityPrompt(prompt)
+                restoreProximityPrompt(descendant)
             end
         end
     end
@@ -190,46 +271,45 @@ end
 RunService.RenderStepped:Connect(function()
     if ESP_Enabled then
         for obj, data in pairs(ESP_Objects) do
-            if not obj:IsDescendantOf(workspace) then
-                ClearESP()
-                UpdateESP()
-                break
+            if not IsValid(obj) or not obj:IsDescendantOf(Workspace) or not IsValid(data.Highlight) then
+                ClearESP(obj)
             end
         end
     end
-    
+
     if NPC_ESP_Enabled then
         for npc, data in pairs(NPC_ESP_Objects) do
-            if not npc:IsDescendantOf(workspace) or (data.Humanoid and data.Humanoid.Health <= 0) then
-                if data.Highlight then
-                    data.Highlight:Destroy()
-                end
-                NPC_ESP_Objects[npc] = nil
+            if not IsValid(npc) or not npc:IsDescendantOf(Workspace) or not IsValid(data.Highlight) or not IsValid(data.Humanoid) or data.Humanoid.Health <= 0 then
+                ClearNPCESP(npc)
             end
         end
     end
 end)
 
 CollectionService:GetInstanceAddedSignal("DraggableObject"):Connect(function(obj)
-    if ESP_Enabled then CreateESP(obj) end
+    if ESP_Enabled then
+        task.wait()
+        CreateESP(obj)
+    end
 end)
 
 CollectionService:GetInstanceRemovedSignal("DraggableObject"):Connect(function(obj)
-    if ESP_Objects[obj] then
-        ClearESP()
-        UpdateESP()
+    ClearESP(obj)
+end)
+
+Workspace.DescendantAdded:Connect(function(descendant)
+    if NPC_ESP_Enabled and descendant:IsA("Model") then
+        task.defer(CreateNPCESP, descendant)
+    end
+
+    if InstantInteract_Enabled and descendant:IsA("ProximityPrompt") then
+        modifyProximityPrompt(descendant)
     end
 end)
 
-workspace.DescendantAdded:Connect(function(desc)
-    if NPC_ESP_Enabled and desc:IsA("Model") and desc:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(desc) then
-        CreateNPCESP(desc)
-    end
-    
-    if desc:IsA("ProximityPrompt") and InstantInteract_Enabled then
-        modifyProximityPrompt(desc)
-    end
-end)
+function IsValid(instance)
+    return instance and instance.Parent ~= nil
+end
 
 local defaultFOV = math.clamp(Camera.FieldOfView, 70, 110)
 
@@ -241,17 +321,16 @@ local Window = Rayfield:CreateWindow({
 })
 
 local WhatsNewTab = Window:CreateTab("Что нового?", "info")
-
 WhatsNewTab:CreateParagraph({
-    Title = "Список изменений", 
-    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n | а ещё скинь дз которые ты знаешь на завтра пж\n | (FIX: В будущем сделать нормальный есп для NPC"
+    Title = "Список изменений",
+    Content = "30.03.2025 04:23 | Добавил моментальное использование аптечки\n30.03.2025 04:35 | Добавил ESP для NPC\n30.03.2025 04:41 | Добавил быстрое взаимодействие\n | 30.03.2025 12:20 FIX: Улучшена стабильность ESP для NPC и предметов"
 })
 
 local MainTab = Window:CreateTab("Главное", "home")
 
 MainTab:CreateToggle({
     Name = "ESP для предметов",
-    CurrentValue = false,
+    CurrentValue = ESP_Enabled,
     Flag = "ToggleESP",
     Callback = function(Value)
         ESP_Enabled = Value
@@ -265,7 +344,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "ESP для NPC",
-    CurrentValue = false,
+    CurrentValue = NPC_ESP_Enabled,
     Flag = "ToggleNPCESP",
     Callback = function(Value)
         NPC_ESP_Enabled = Value
@@ -279,7 +358,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Мгновенное использование аптечки",
-    CurrentValue = false,
+    CurrentValue = InstantHeal_Enabled,
     Flag = "InstantHealToggle",
     Callback = function(Value)
         InstantHeal_Enabled = Value
@@ -288,7 +367,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Быстрое взаимодействие",
-    CurrentValue = false,
+    CurrentValue = InstantInteract_Enabled,
     Flag = "InstantInteractToggle",
     Callback = function(Value)
         InstantInteract_Enabled = Value
@@ -297,19 +376,24 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateColorPicker({
-    Name = "Цвет обводки предметов (с есп не ворк)",
+    Name = "Цвет обводки предметов (ИГРОВОЙ)",
     Color = Color3.fromRGB(255, 255, 255),
     Flag = "OutlineColorPicker",
     Callback = function(Color)
-        local highlight = ReplicatedStorage:FindFirstChild("Client")
-            and ReplicatedStorage.Client:FindFirstChild("Handlers")
-            and ReplicatedStorage.Client.Handlers:FindFirstChild("DraggableItemHandlers")
-            and ReplicatedStorage.Client.Handlers.DraggableItemHandlers:FindFirstChild("ClientDraggableObjectHandler")
-            and ReplicatedStorage.Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler:FindFirstChild("DragHighlight")
+        local success = pcall(function()
+            local highlight = ReplicatedStorage:FindFirstChild("Client", 1)
+                and ReplicatedStorage.Client:FindFirstChild("Handlers", 1)
+                and ReplicatedStorage.Client.Handlers:FindFirstChild("DraggableItemHandlers", 1)
+                and ReplicatedStorage.Client.Handlers.DraggableItemHandlers:FindFirstChild("ClientDraggableObjectHandler", 1)
+                and ReplicatedStorage.Client.Handlers.DraggableItemHandlers.ClientDraggableObjectHandler:FindFirstChild("DragHighlight")
 
-        if highlight and highlight:IsA("Highlight") then
-            highlight.OutlineColor = Color
-        end
+            if highlight and highlight:IsA("Highlight") then
+                highlight.OutlineColor = Color
+            else
+                warn("Game's DragHighlight not found.")
+            end
+        end)
+        if not success then warn("Error accessing game's DragHighlight.") end
     end
 })
 
@@ -318,16 +402,21 @@ MainTab:CreateSlider({
     Range = {0.1, 0.7},
     Increment = 0.1,
     Suffix = "x",
-    CurrentValue = 1,
+    CurrentValue = 0.3,
     Flag = "CrosshairSizeSlider",
     Callback = function(Value)
-        local crosshair = LocalPlayer:FindFirstChild("PlayerGui")
-            and LocalPlayer.PlayerGui:FindFirstChild("Crosshair")
-            and LocalPlayer.PlayerGui.Crosshair:FindFirstChild("Crosshair")
+        local success = pcall(function()
+            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+            local crosshairUI = playerGui and playerGui:FindFirstChild("Crosshair")
+            local crosshair = crosshairUI and crosshairUI:FindFirstChild("Crosshair")
 
-        if crosshair then
-            crosshair.Size = UDim2.new(0, Value * 20, 0, Value * 20)
-        end
+            if crosshair and (crosshair:IsA("ImageLabel") or crosshair:IsA("Frame")) then
+                crosshair.Size = UDim2.new(0, Value * 20, 0, Value * 20)
+            else
+
+            end
+        end)
+
     end
 })
 
@@ -366,3 +455,4 @@ SettingsTab:CreateColorPicker({
 })
 
 patchBandageSystem()
+updateAllProximityPrompts()
